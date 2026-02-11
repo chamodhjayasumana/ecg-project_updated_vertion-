@@ -1,0 +1,5 @@
+{
+  "description": "Metadata for processed ECG windows",
+  "created_by": "GitHub Copilot (GPT-5.1)",
+  "note": "Fill this with dataset configuration details (sampling rate, window length, class mapping, etc.)"
+}
