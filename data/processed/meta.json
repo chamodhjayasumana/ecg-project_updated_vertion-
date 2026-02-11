@@ -1,5 +1,16 @@
 {
-  "description": "Metadata for processed ECG windows",
-  "created_by": "GitHub Copilot (GPT-5.1)",
-  "note": "Fill this with dataset configuration details (sampling rate, window length, class mapping, etc.)"
+  "fs_target": 250,
+  "win_sec": 10,
+  "hop_sec": 5,
+  "labeling": "binary: abnormal if any non-normal beat symbol appears in window",
+  "normal_symbols": [
+    "L",
+    "N",
+    "R",
+    "e",
+    "j"
+  ],
+  "records_count": 48,
+  "windows_total": 17280,
+  "abnormal_rate": 0.47528935185185184
 }
