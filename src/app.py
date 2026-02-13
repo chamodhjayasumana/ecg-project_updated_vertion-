@@ -1,9 +1,11 @@
+import json
 import streamlit as st
 import numpy as np
 import wfdb
 import matplotlib.pyplot as plt
 from pathlib import Path
 import tensorflow as tf
+from sklearn.metrics import ConfusionMatrixDisplay
 from preprocess_utils import bandpass_notch, resample_to, z_norm
 
 RAW_DIR = Path("../data/raw/mitbih")
@@ -86,6 +88,11 @@ for i in range(len(p)):
     })
 st.dataframe(timeline, use_container_width=True)
 
+st.subheader("✅ Prediction Summary for Selected Record")
+st.metric("Total windows", len(p))
+st.metric("Predicted abnormal windows", int(y_pred.sum()))
+st.metric("Predicted abnormal rate", f"{y_pred.mean()*100:.1f}%")
+
 # Timeline plot
 st.subheader("Abnormality Probability Timeline")
 fig2 = plt.figure(figsize=(12, 3))
@@ -95,4 +102,27 @@ plt.title("p(abnormal) per window")
 plt.xlabel("time (s)")
 plt.ylabel("probability")
 st.pyplot(fig2)
+
+st.subheader("🧪 Offline Model Results (Saved)")
+
+RESULTS_DIR = Path("../results")
+cm_path = RESULTS_DIR / "confusion_matrix.npy"
+rep_path = RESULTS_DIR / "classification_report.json"
+
+if cm_path.exists() and rep_path.exists():
+    cm = np.load(cm_path)
+    report = json.loads(rep_path.read_text())
+
+    # --- Confusion Matrix plot ---
+    fig_cm, ax = plt.subplots(figsize=(5, 4))
+    disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=["normal", "abnormal"])
+    disp.plot(ax=ax, values_format="d")
+    ax.set_title("Confusion Matrix (Offline Test Set)")
+    st.pyplot(fig_cm)
+
+    # --- Classification report JSON ---
+    st.subheader("📋 Classification Report")
+    st.json(report)
+else:
+    st.warning("No saved offline results found. Run train_offline.py first to generate them.")
    

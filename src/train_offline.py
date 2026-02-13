@@ -1,3 +1,4 @@
+import json
 import numpy as np
 from pathlib import Path
 from sklearn.metrics import classification_report, confusion_matrix
@@ -8,6 +9,8 @@ from tensorflow.keras.layers import Conv1D, MaxPooling1D, BatchNormalization, Dr
 DATA_DIR = Path("../data/processed")
 MODEL_DIR = Path("../models")
 MODEL_DIR.mkdir(parents=True, exist_ok=True)
+RESULTS_DIR = Path("../results")
+RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
 def build_model(input_shape):
     model = Sequential([
@@ -72,8 +75,23 @@ def main():
     p = model.predict(X_test).ravel()
     y_pred = (p >= 0.5).astype(int)
 
-    print("\nConfusion Matrix:\n", confusion_matrix(y_test, y_pred))
-    print("\nReport:\n", classification_report(y_test, y_pred, target_names=["normal", "abnormal"]))
+    cm = confusion_matrix(y_test, y_pred)
+    report = classification_report(
+        y_test,
+        y_pred,
+        target_names=["normal", "abnormal"],
+        output_dict=True,
+        zero_division=0,
+    )
+
+    # Save confusion matrix + report
+    np.save(RESULTS_DIR / "confusion_matrix.npy", cm)
+    with open(RESULTS_DIR / "classification_report.json", "w") as f:
+        json.dump(report, f, indent=2)
+
+    print("\nConfusion Matrix:\n", cm)
+    print("\nReport:\n", json.dumps(report, indent=2))
+    print("\nSaved to:", RESULTS_DIR.resolve())
 
 if __name__ == "__main__":
     main()
