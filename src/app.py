@@ -137,7 +137,15 @@ if pw is not None:
             "risk": float(pw.risk[i]),
             "final_label": "Abnormal" if int(pw.y_abn[i]) == 1 else "Normal",
         })
-    st.dataframe(timeline_pw, use_container_width=True)
+    df_timeline_pw = pd.DataFrame(timeline_pw)
+    st.dataframe(df_timeline_pw, use_container_width=True)
+    csv_timeline_pw = df_timeline_pw.to_csv(index=False)
+    st.download_button(
+        "Download Person-wise Window Results (CSV)",
+        data=csv_timeline_pw,
+        file_name="personwise_window_results.csv",
+        mime="text/csv"
+    )
 
 # Random Forest predictions on handcrafted features
 if rf_model is not None:
@@ -202,7 +210,15 @@ for i in range(len(p)):
 
     timeline.append(row)
 
-st.dataframe(timeline, use_container_width=True)
+df_timeline = pd.DataFrame(timeline)
+st.dataframe(df_timeline, use_container_width=True)
+csv_timeline = df_timeline.to_csv(index=False)
+st.download_button(
+    "Download Window-wise Outputs (CSV)",
+    data=csv_timeline,
+    file_name="window_wise_outputs.csv",
+    mime="text/csv"
+)
 
 # Timeline plot
 st.subheader("Abnormality Probability Timeline")
@@ -268,4 +284,17 @@ if cm_path.exists() and rep_json_path.exists():
 
 else:
     st.warning("No saved offline results found. Run train_offline.py to generate them.")
+
+st.subheader("🌲 Random Forest Baseline (Offline Test Set)")
+
+rf_cm_path = Path("../results/rf_confusion.npy")
+rf_rep_path = Path("../results/rf_report.json")
+
+if rf_cm_path.exists() and rf_rep_path.exists():
+    rf_cm = np.load(rf_cm_path)
+    rf_rep = json.loads(rf_rep_path.read_text())
+    st.write("RF Confusion Matrix:", rf_cm)
+    st.json(rf_rep)
+else:
+    st.warning("Run train_random_forest.py to generate RF baseline results.")
    
