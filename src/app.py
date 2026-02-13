@@ -9,6 +9,7 @@ import tensorflow as tf
 from sklearn.metrics import ConfusionMatrixDisplay
 from preprocess_utils import bandpass_notch, resample_to, z_norm
 from window_features import extract_window_features
+from wavelet_utils import window_to_scalogram_cwt
 import joblib
 from personwise_logic import build_baseline_profile, personwise_predict_windows
 
@@ -53,13 +54,8 @@ def make_windows(sig, fs):
 
 ensure_mitbih()
 records = list_records()
-
-if not MODEL_PATH.exists():
-    st.error("Model not found. Run train_offline.py first to create models/cnn_bilstm.keras")
-    st.stop()
-
 rid = st.sidebar.selectbox("Choose record", records, index=0)
-model = load_model()
+model_choice = st.sidebar.selectbox("Model", ["CNN-BiLSTM (raw)", "Wavelet+CNN"], index=0)
 
 if RF_MODEL_PATH.exists():
     rf_model = load_rf_model()
@@ -79,7 +75,27 @@ sig, fs = resample_to(sig, fs_in, FS_TARGET)
 Xw, starts = make_windows(sig, FS_TARGET)     # [N, T]
 Xw_in = Xw[..., None]                         # [N, T, 1]
 
-p = model.predict(Xw_in, verbose=0).ravel()
+if model_choice == "Wavelet+CNN":
+    wcnn_path = Path("../models/wavelet_cnn.keras")
+    if not wcnn_path.exists():
+        st.error("Wavelet+CNN model not found. Run train_wavelet_cnn.py first.")
+        st.stop()
+
+    wcnn = tf.keras.models.load_model(wcnn_path)
+
+    # Build scalograms for current record windows
+    S_list = [window_to_scalogram_cwt(w, fs=FS_TARGET, n_scales=64) for w in Xw]
+    S = np.stack(S_list).astype(np.float32)[..., None]   # [N, scales, T, 1]
+
+    p = wcnn.predict(S, verbose=0).ravel()
+else:
+    if not MODEL_PATH.exists():
+        st.error("Model not found. Run train_offline.py first to create models/cnn_bilstm.keras")
+        st.stop()
+
+    model = load_model()
+    p = model.predict(Xw_in, verbose=0).ravel()
+
 y_pred = (p >= 0.5).astype(int)
 
 # Person-wise baseline from "most normal" windows (lowest model abnormal probabilities)
@@ -284,6 +300,24 @@ if cm_path.exists() and rep_json_path.exists():
 
 else:
     st.warning("No saved offline results found. Run train_offline.py to generate them.")
+
+st.subheader("🧪 Wavelet+CNN Offline Results")
+
+cm_path = Path("../results/wcnn_confusion.npy")
+rp_path = Path("../results/wcnn_report.json")
+
+if cm_path.exists() and rp_path.exists():
+    cm = np.load(cm_path)
+    rep = json.loads(rp_path.read_text())
+
+    fig_cm, ax = plt.subplots(figsize=(5,4))
+    ConfusionMatrixDisplay(cm, display_labels=["normal","abnormal"]).plot(ax=ax, values_format="d")
+    ax.set_title("Wavelet+CNN Confusion Matrix")
+    st.pyplot(fig_cm)
+
+    st.json(rep)
+else:
+    st.info("Run train_wavelet_cnn.py to generate Wavelet+CNN results.")
 
 st.subheader("🌲 Random Forest Baseline (Offline Test Set)")
 
