@@ -9,8 +9,9 @@ import tensorflow as tf
 from sklearn.metrics import ConfusionMatrixDisplay
 from preprocess_utils import bandpass_notch, resample_to, z_norm
 from window_features import extract_window_features
-from personwise_windows import build_window_baseline, personwise_predict_windows
 import joblib
+from personwise_logic import build_baseline_profile, personwise_predict_windows
+
 
 RAW_DIR = Path("../data/raw/mitbih")
 MODEL_PATH = Path("../models/cnn_bilstm.keras")
@@ -81,6 +82,63 @@ Xw_in = Xw[..., None]                         # [N, T, 1]
 p = model.predict(Xw_in, verbose=0).ravel()
 y_pred = (p >= 0.5).astype(int)
 
+# Person-wise baseline from "most normal" windows (lowest model abnormal probabilities)
+pw = None
+if len(Xw) >= 5:
+    st.sidebar.markdown("### Person-wise baseline")
+    enable_personwise = st.sidebar.checkbox("Enable person-wise", value=True)
+    K_max = min(50, len(Xw))
+    K = st.sidebar.slider("K baseline windows", 5, K_max, 20)
+    dev_thr = st.sidebar.slider("Hard deviation threshold", 1.0, 20.0, 5.0, 0.5)
+    risk_thr = st.sidebar.slider("Risk threshold (R)", 0.0, 1.0, 0.60, 0.01)
+    p_thr = st.sidebar.slider("Model prob threshold (p)", 0.0, 1.0, 0.70, 0.01)
+
+    if enable_personwise:
+        # Choose baseline windows = lowest model abnormal probabilities
+        idx_sorted = np.argsort(p)              # low p = normal
+        base_idx = idx_sorted[:K]
+        baseline_windows = [Xw[i] for i in base_idx]
+
+        baseline = build_baseline_profile(
+            person_id=f"rec_{rid}",
+            windows=baseline_windows,
+            fs=FS_TARGET,
+            use_wavelet_energy=True
+        )
+
+        pw = personwise_predict_windows(
+            windows=[w for w in Xw],
+            model_probs=p,
+            baseline=baseline,
+            fs=FS_TARGET,
+            risk_thr=float(risk_thr),
+            p_thr=float(p_thr),
+            td=3.0,
+            hard_dev_thr=float(dev_thr),
+            lam=0.6,
+            smooth_min_run=3,
+            consec_local=3,
+            global_pct=0.20,
+            use_wavelet_energy=True
+        )
+
+        st.subheader("🧍 Person-wise Window Results")
+        st.write("Flags:", pw.flags)
+        st.metric("Abnormal window rate (person-wise)", f"{pw.y_abn.mean()*100:.1f}%")
+
+if pw is not None:
+    timeline_pw = []
+    for i in range(len(Xw)):
+        timeline_pw.append({
+            "start_s": float(starts[i]),
+            "end_s": float(starts[i] + WIN_SEC),
+            "p_model": float(p[i]),
+            "dev_score": float(pw.d_score[i]),
+            "risk": float(pw.risk[i]),
+            "final_label": "Abnormal" if int(pw.y_abn[i]) == 1 else "Normal",
+        })
+    st.dataframe(timeline_pw, use_container_width=True)
+
 # Random Forest predictions on handcrafted features
 if rf_model is not None:
     feats = np.array([extract_window_features(w, FS_TARGET) for w in Xw])
@@ -90,21 +148,12 @@ else:
     rf_proba = None
     rf_pred = None
 
-# Person-wise window baseline and predictions
-pw = None
-if len(Xw) >= 5:
-    max_k = min(40, len(Xw))
-    default_k = min(20, max_k)
-    K = st.sidebar.slider("Baseline windows (K)", 5, max_k, default_k)
-    baseline = build_window_baseline(Xw[:K], fs=FS_TARGET)
-    pw = personwise_predict_windows(Xw, p, baseline, fs=FS_TARGET)
-
 st.sidebar.metric("Windows", len(p))
 st.sidebar.metric("CNN abnormal rate", f"{y_pred.mean()*100:.1f}%")
 if rf_pred is not None:
     st.sidebar.metric("RF abnormal rate", f"{rf_pred.mean()*100:.1f}%")
 if pw is not None:
-    st.sidebar.metric("Person-wise abnormal %", f"{pw['abnormal'].mean()*100:.1f}%")
+    st.sidebar.metric("Person-wise abnormal %", f"{pw.y_abn.mean()*100:.1f}%")
 
 st.subheader("✅ CNN (BiLSTM) Prediction Summary")
 st.metric("Total windows", len(p))
@@ -118,7 +167,7 @@ if rf_pred is not None:
 
 if pw is not None:
     st.subheader("🧍 Person-wise Window Analysis")
-    st.metric("Deviation abnormal %", float(pw["abnormal"].mean() * 100.0))
+    st.metric("Person-wise abnormal %", float(pw.y_abn.mean() * 100.0))
 
 # Plot signal sample
 st.subheader("ECG Sample (filtered)")
@@ -145,8 +194,8 @@ for i in range(len(p)):
         row["rf_label"] = "N/A"
 
     if pw is not None:
-        row["z_dev"] = float(pw["z_score"][i])
-        row["final_personwise"] = "Abnormal" if pw["abnormal"][i] == 1 else "Normal"
+        row["z_dev"] = float(pw.d_score[i])
+        row["final_personwise"] = "Abnormal" if int(pw.y_abn[i]) == 1 else "Normal"
     else:
         row["z_dev"] = np.nan
         row["final_personwise"] = "N/A"
