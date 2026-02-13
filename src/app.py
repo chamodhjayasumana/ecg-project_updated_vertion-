@@ -8,9 +8,13 @@ from pathlib import Path
 import tensorflow as tf
 from sklearn.metrics import ConfusionMatrixDisplay
 from preprocess_utils import bandpass_notch, resample_to, z_norm
+from window_features import extract_window_features
+from personwise_windows import build_window_baseline, personwise_predict_windows
+import joblib
 
 RAW_DIR = Path("../data/raw/mitbih")
 MODEL_PATH = Path("../models/cnn_bilstm.keras")
+RF_MODEL_PATH = Path("../models/random_forest.pkl")
 
 FS_TARGET = 250
 WIN_SEC = 10
@@ -32,6 +36,10 @@ def list_records():
 def load_model():
     return tf.keras.models.load_model(MODEL_PATH)
 
+@st.cache_resource
+def load_rf_model():
+    return joblib.load(RF_MODEL_PATH)
+
 def make_windows(sig, fs):
     win = WIN_SEC * fs
     hop = HOP_SEC * fs
@@ -52,6 +60,12 @@ if not MODEL_PATH.exists():
 rid = st.sidebar.selectbox("Choose record", records, index=0)
 model = load_model()
 
+if RF_MODEL_PATH.exists():
+    rf_model = load_rf_model()
+else:
+    rf_model = None
+    st.sidebar.warning("Random Forest model not found. Run train_random_forest.py to create it.")
+
 # Load record
 rec = wfdb.rdrecord(str(RAW_DIR / rid))
 sig = rec.p_signal[:, 0].astype(np.float32)
@@ -67,13 +81,44 @@ Xw_in = Xw[..., None]                         # [N, T, 1]
 p = model.predict(Xw_in, verbose=0).ravel()
 y_pred = (p >= 0.5).astype(int)
 
-st.sidebar.metric("Windows", len(p))
-st.sidebar.metric("Abnormal rate", f"{y_pred.mean()*100:.1f}%")
+# Random Forest predictions on handcrafted features
+if rf_model is not None:
+    feats = np.array([extract_window_features(w, FS_TARGET) for w in Xw])
+    rf_proba = rf_model.predict_proba(feats)[:, 1]
+    rf_pred = (rf_proba >= 0.5).astype(int)
+else:
+    rf_proba = None
+    rf_pred = None
 
-st.subheader("✅ Prediction Summary (Selected Record)")
+# Person-wise window baseline and predictions
+pw = None
+if len(Xw) >= 5:
+    max_k = min(40, len(Xw))
+    default_k = min(20, max_k)
+    K = st.sidebar.slider("Baseline windows (K)", 5, max_k, default_k)
+    baseline = build_window_baseline(Xw[:K], fs=FS_TARGET)
+    pw = personwise_predict_windows(Xw, p, baseline, fs=FS_TARGET)
+
+st.sidebar.metric("Windows", len(p))
+st.sidebar.metric("CNN abnormal rate", f"{y_pred.mean()*100:.1f}%")
+if rf_pred is not None:
+    st.sidebar.metric("RF abnormal rate", f"{rf_pred.mean()*100:.1f}%")
+if pw is not None:
+    st.sidebar.metric("Person-wise abnormal %", f"{pw['abnormal'].mean()*100:.1f}%")
+
+st.subheader("✅ CNN (BiLSTM) Prediction Summary")
 st.metric("Total windows", len(p))
-st.metric("Predicted abnormal windows", int(y_pred.sum()))
-st.metric("Predicted abnormal rate", f"{y_pred.mean()*100:.1f}%")
+st.metric("CNN predicted abnormal windows", int(y_pred.sum()))
+st.metric("CNN predicted abnormal rate", f"{y_pred.mean()*100:.1f}%")
+
+if rf_pred is not None:
+    st.subheader("🌲 Random Forest Prediction Summary")
+    st.metric("RF predicted abnormal windows", int(rf_pred.sum()))
+    st.metric("RF predicted abnormal rate", f"{rf_pred.mean()*100:.1f}%")
+
+if pw is not None:
+    st.subheader("🧍 Person-wise Window Analysis")
+    st.metric("Deviation abnormal %", float(pw["abnormal"].mean() * 100.0))
 
 # Plot signal sample
 st.subheader("ECG Sample (filtered)")
@@ -82,16 +127,32 @@ plt.plot(sig[:FS_TARGET*20])
 plt.title("First 20 seconds (Filtered + Resampled)")
 st.pyplot(fig)
 
-# Timeline table
-st.subheader("Interval Timeline (10s windows, 5s overlap)")
+st.subheader("Window-wise Outputs (CNN vs RF vs Person-wise)")
 timeline = []
 for i in range(len(p)):
-    timeline.append({
+    row = {
         "start_s": float(starts[i]),
         "end_s": float(starts[i] + WIN_SEC),
-        "p_abnormal": float(p[i]),
-        "label": "Abnormal" if y_pred[i] == 1 else "Normal"
-    })
+        "p_cnn": float(p[i]),
+        "cnn_label": "Abnormal" if y_pred[i] == 1 else "Normal",
+    }
+
+    if rf_proba is not None:
+        row["p_rf"] = float(rf_proba[i])
+        row["rf_label"] = "Abnormal" if rf_pred[i] == 1 else "Normal"
+    else:
+        row["p_rf"] = np.nan
+        row["rf_label"] = "N/A"
+
+    if pw is not None:
+        row["z_dev"] = float(pw["z_score"][i])
+        row["final_personwise"] = "Abnormal" if pw["abnormal"][i] == 1 else "Normal"
+    else:
+        row["z_dev"] = np.nan
+        row["final_personwise"] = "N/A"
+
+    timeline.append(row)
+
 st.dataframe(timeline, use_container_width=True)
 
 # Timeline plot
