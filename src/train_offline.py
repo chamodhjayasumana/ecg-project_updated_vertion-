@@ -1,5 +1,6 @@
 import json
 import numpy as np
+import pandas as pd
 from pathlib import Path
 from sklearn.metrics import classification_report, confusion_matrix
 import tensorflow as tf
@@ -76,22 +77,25 @@ def main():
     y_pred = (p >= 0.5).astype(int)
 
     cm = confusion_matrix(y_test, y_pred)
-    report = classification_report(
-        y_test,
-        y_pred,
+
+    report_dict = classification_report(
+        y_test, y_pred,
         target_names=["normal", "abnormal"],
         output_dict=True,
-        zero_division=0,
+        zero_division=0
     )
 
-    # Save confusion matrix + report
+    # Save
     np.save(RESULTS_DIR / "confusion_matrix.npy", cm)
-    with open(RESULTS_DIR / "classification_report.json", "w") as f:
-        json.dump(report, f, indent=2)
 
-    print("\nConfusion Matrix:\n", cm)
-    print("\nReport:\n", json.dumps(report, indent=2))
-    print("\nSaved to:", RESULTS_DIR.resolve())
+    with open(RESULTS_DIR / "classification_report.json", "w") as f:
+        json.dump(report_dict, f, indent=2)
+
+    # Save as CSV too (nice for thesis)
+    df_report = pd.DataFrame(report_dict).transpose()
+    df_report.to_csv(RESULTS_DIR / "classification_report.csv", index=True)
+
+    print("Saved to:", RESULTS_DIR.resolve())
 
 if __name__ == "__main__":
     main()

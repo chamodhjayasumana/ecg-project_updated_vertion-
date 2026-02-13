@@ -1,6 +1,7 @@
 import json
 import streamlit as st
 import numpy as np
+import pandas as pd
 import wfdb
 import matplotlib.pyplot as plt
 from pathlib import Path
@@ -69,6 +70,11 @@ y_pred = (p >= 0.5).astype(int)
 st.sidebar.metric("Windows", len(p))
 st.sidebar.metric("Abnormal rate", f"{y_pred.mean()*100:.1f}%")
 
+st.subheader("✅ Prediction Summary (Selected Record)")
+st.metric("Total windows", len(p))
+st.metric("Predicted abnormal windows", int(y_pred.sum()))
+st.metric("Predicted abnormal rate", f"{y_pred.mean()*100:.1f}%")
+
 # Plot signal sample
 st.subheader("ECG Sample (filtered)")
 fig = plt.figure(figsize=(12, 3))
@@ -88,11 +94,6 @@ for i in range(len(p)):
     })
 st.dataframe(timeline, use_container_width=True)
 
-st.subheader("✅ Prediction Summary for Selected Record")
-st.metric("Total windows", len(p))
-st.metric("Predicted abnormal windows", int(y_pred.sum()))
-st.metric("Predicted abnormal rate", f"{y_pred.mean()*100:.1f}%")
-
 # Timeline plot
 st.subheader("Abnormality Probability Timeline")
 fig2 = plt.figure(figsize=(12, 3))
@@ -103,26 +104,58 @@ plt.xlabel("time (s)")
 plt.ylabel("probability")
 st.pyplot(fig2)
 
-st.subheader("🧪 Offline Model Results (Saved)")
+st.subheader("🧪 Offline Model Results (Hold-out Test Set)")
 
 RESULTS_DIR = Path("../results")
 cm_path = RESULTS_DIR / "confusion_matrix.npy"
-rep_path = RESULTS_DIR / "classification_report.json"
+rep_json_path = RESULTS_DIR / "classification_report.json"
+rep_csv_path = RESULTS_DIR / "classification_report.csv"
 
-if cm_path.exists() and rep_path.exists():
+if cm_path.exists() and rep_json_path.exists():
     cm = np.load(cm_path)
-    report = json.loads(rep_path.read_text())
+    report_dict = json.loads(rep_json_path.read_text())
 
-    # --- Confusion Matrix plot ---
+    # --- Confusion Matrix Plot ---
     fig_cm, ax = plt.subplots(figsize=(5, 4))
     disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=["normal", "abnormal"])
     disp.plot(ax=ax, values_format="d")
     ax.set_title("Confusion Matrix (Offline Test Set)")
     st.pyplot(fig_cm)
 
-    # --- Classification report JSON ---
-    st.subheader("📋 Classification Report")
-    st.json(report)
+    # --- Report table ---
+    st.subheader("📋 Classification Report (Table)")
+    df_report = pd.DataFrame(report_dict).transpose()
+    st.dataframe(df_report, use_container_width=True)
+
+    # --- Download buttons ---
+    st.subheader("⬇ Download Results")
+
+    # confusion matrix CSV
+    cm_csv = pd.DataFrame(cm, index=["true_normal", "true_abnormal"], columns=["pred_normal", "pred_abnormal"]).to_csv()
+    st.download_button(
+        "Download Confusion Matrix (CSV)",
+        data=cm_csv,
+        file_name="confusion_matrix.csv",
+        mime="text/csv"
+    )
+
+    # report JSON
+    st.download_button(
+        "Download Classification Report (JSON)",
+        data=json.dumps(report_dict, indent=2),
+        file_name="classification_report.json",
+        mime="application/json"
+    )
+
+    # report CSV (if exists)
+    if rep_csv_path.exists():
+        st.download_button(
+            "Download Classification Report (CSV)",
+            data=rep_csv_path.read_text(),
+            file_name="classification_report.csv",
+            mime="text/csv"
+        )
+
 else:
-    st.warning("No saved offline results found. Run train_offline.py first to generate them.")
+    st.warning("No saved offline results found. Run train_offline.py to generate them.")
    
