@@ -12,6 +12,8 @@ from window_features import extract_window_features
 from wavelet_utils import window_to_scalogram_cwt
 import joblib
 from personwise_logic import build_baseline_profile, personwise_predict_windows
+from model_comparison import build_comparison_table
+
 
 
 RAW_DIR = Path("../data/raw/mitbih")
@@ -198,6 +200,7 @@ st.subheader("ECG Sample (filtered)")
 fig = plt.figure(figsize=(12, 3))
 plt.plot(sig[:FS_TARGET*20])
 plt.title("First 20 seconds (Filtered + Resampled)")
+fig.savefig("filtered_20s_example.png", dpi=300, bbox_inches="tight")
 st.pyplot(fig)
 
 st.subheader("Window-wise Outputs (CNN vs RF vs Person-wise)")
@@ -245,6 +248,20 @@ plt.title("p(abnormal) per window")
 plt.xlabel("time (s)")
 plt.ylabel("probability")
 st.pyplot(fig2)
+
+if pw is not None:
+    st.subheader("Person-wise Fusion Timeline")
+    fig3 = plt.figure(figsize=(12, 3))
+    d_norm = np.clip(pw.d_score / 3.0, 0.0, 1.0)
+    plt.plot(starts, p, label="p_model")
+    plt.plot(starts, d_norm, label="d_norm (D/3)")
+    plt.plot(starts, pw.risk, label="risk R")
+    plt.ylim(0.0, 1.05)
+    plt.xlabel("time (s)")
+    plt.ylabel("normalized value")
+    plt.title("Model prob vs deviation vs fused risk")
+    plt.legend(loc="upper right")
+    st.pyplot(fig3)
 
 st.subheader("🧪 Offline Model Results (Hold-out Test Set)")
 
@@ -332,3 +349,20 @@ if rf_cm_path.exists() and rf_rep_path.exists():
 else:
     st.warning("Run train_random_forest.py to generate RF baseline results.")
    
+
+st.subheader("📊 Model Comparison")
+
+try:
+    df = build_comparison_table()
+
+    if len(df):
+        st.dataframe(df.style.format({
+            "Accuracy":"{:.3f}",
+            "Precision":"{:.3f}",
+            "Recall":"{:.3f}",
+            "F1":"{:.3f}"
+        }), use_container_width=True)
+    else:
+        st.info("Run all training scripts first.")
+except Exception as e:
+    st.error(str(e))
